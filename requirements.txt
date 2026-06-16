@@ -1,0 +1,7 @@
+streamlit
+tensorflow
+pillow
+matplotlib
+numpy
+keras_preprocessing
+pillow-avif-plugin

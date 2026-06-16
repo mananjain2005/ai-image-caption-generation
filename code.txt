@@ -1,0 +1,412 @@
+import streamlit as st
+import pickle
+import numpy as np
+from PIL import Image
+
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import (
+    Input,
+    Dense,
+    LSTM,
+    Embedding,
+    Dropout,
+    Reshape,
+    add,
+    concatenate
+)
+
+from tensorflow.keras.applications import DenseNet201
+from tensorflow.keras.applications.densenet import preprocess_input
+
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.preprocessing.image import img_to_array
+
+
+# =====================================================
+# PAGE CONFIG
+# =====================================================
+
+st.set_page_config(
+    page_title="Image Caption Generator",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# =====================================================
+# CUSTOM CSS
+# =====================================================
+
+st.markdown(
+    """
+    <style>
+
+    .stApp {
+
+        background: linear-gradient(
+            135deg,
+            #0f172a,
+            #1e293b,
+            #334155
+        );
+
+        color: white;
+    }
+
+    .main {
+        padding-top: 0rem;
+    }
+
+    #MainMenu {
+        visibility: hidden;
+    }
+
+    footer {
+        visibility: hidden;
+    }
+
+    .hero-title {
+
+        text-align: center;
+
+        font-size: 3rem;
+
+        font-weight: 700;
+
+        margin-bottom: 0.5rem;
+
+        color: #f8fafc;
+    }
+
+    .hero-subtitle {
+
+        text-align: center;
+
+        color: #cbd5e1;
+
+        font-size: 1.1rem;
+
+        margin-bottom: 2rem;
+    }
+
+    .caption-box {
+
+        background: rgba(255,255,255,0.08);
+
+        border: 1px solid rgba(255,255,255,0.1);
+
+        border-radius: 14px;
+
+        padding: 0.7rem;
+
+        margin-top: 0.5rem;
+
+        margin-bottom: 1.2rem;
+
+        text-align: center;
+
+        font-size: 0.85rem;
+
+        font-weight: 400;
+
+        color: white;
+
+        min-height: 60px;
+
+        display: flex;
+
+        align-items: center;
+
+        justify-content: center;
+
+        box-shadow: 0 8px 24px rgba(0,0,0,0.20);
+    }
+
+    /* Equal image height with 30% reduction */
+
+    [data-testid="stImage"] img {
+
+        height: 225px !important;
+
+        object-fit: cover;
+
+        border-radius: 16px;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# =====================================================
+# HERO SECTION
+# =====================================================
+
+st.markdown(
+    """
+    <div class="hero-title">
+        Image Caption Generator
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="hero-subtitle">
+        Generate intelligent image captions using CNN and LSTM
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# =====================================================
+# LOAD MODEL
+# =====================================================
+
+@st.cache_resource
+def load_caption_model():
+
+    with open("model/tokenizer.pkl", "rb") as f:
+        tokenizer = pickle.load(f)
+
+    vocab_size = len(tokenizer.word_index) + 1
+
+    # Replace with your actual max_length
+    max_length = 74
+
+    # =================================================
+    # MODEL ARCHITECTURE
+    # =================================================
+
+    input1 = Input(shape=(1920,))
+    input2 = Input(shape=(max_length,))
+
+    img_features = Dense(
+        256,
+        activation='relu'
+    )(input1)
+
+    img_features_reshaped = Reshape(
+        (1,256)
+    )(img_features)
+
+    sentence_features = Embedding(
+        vocab_size,
+        256,
+        mask_zero=False
+    )(input2)
+
+    merged = concatenate(
+        [img_features_reshaped, sentence_features],
+        axis=1
+    )
+
+    sentence_features = LSTM(256)(merged)
+
+    x = Dropout(0.5)(sentence_features)
+
+    x = add([x, img_features])
+
+    x = Dense(
+        128,
+        activation='relu'
+    )(x)
+
+    x = Dropout(0.5)(x)
+
+    output = Dense(
+        vocab_size,
+        activation='softmax'
+    )(x)
+
+    caption_model = Model(
+        inputs=[input1,input2],
+        outputs=output
+    )
+
+    caption_model.load_weights("model/weights.h5")
+
+    return caption_model, tokenizer, max_length
+
+
+# =====================================================
+# LOAD FEATURE EXTRACTOR
+# =====================================================
+
+@st.cache_resource
+def load_feature_extractor():
+
+    base_model = DenseNet201()
+
+    feature_extractor = Model(
+        inputs=base_model.input,
+        outputs=base_model.layers[-2].output
+    )
+
+    return feature_extractor
+
+
+# =====================================================
+# LOAD EVERYTHING
+# =====================================================
+
+caption_model, tokenizer, max_length = load_caption_model()
+
+feature_extractor = load_feature_extractor()
+
+# =====================================================
+# FAST INDEX LOOKUP
+# =====================================================
+
+word_index = tokenizer.word_index
+
+index_word = {
+    v:k for k,v in word_index.items()
+}
+
+# =====================================================
+# FAST GREEDY DECODING
+# =====================================================
+
+def predict_caption_fast(model, image_features):
+
+    in_text = "startseq"
+
+    for i in range(max_length):
+
+        sequence = tokenizer.texts_to_sequences([in_text])[0]
+
+        sequence = pad_sequences(
+            [sequence],
+            maxlen=max_length
+        )
+
+        yhat = model.predict(
+            [image_features, sequence],
+            verbose=0
+        )
+
+        yhat = np.argmax(yhat)
+
+        word = index_word.get(yhat)
+
+        if word is None:
+            break
+
+        if word == "endseq":
+            break
+
+        in_text += " " + word
+
+    final_caption = in_text.replace(
+        "startseq",
+        ""
+    ).strip()
+
+    return final_caption
+
+
+# =====================================================
+# SIDEBAR
+# =====================================================
+
+with st.sidebar:
+
+    st.markdown("## Model Information")
+
+    st.markdown(
+        """
+        - CNN : DenseNet201
+        - Sequence Model : LSTM
+        - Dataset : Flickr30k
+        - Framework : TensorFlow + Streamlit
+        """
+    )
+
+    st.markdown("---")
+
+    st.markdown(
+        """
+        ## Team Members
+
+        - Manan Jain : 23/EC/120  
+        - Manya Sharma : 23/EC/126
+        """
+    )
+
+# =====================================================
+# FILE UPLOADER
+# =====================================================
+
+uploaded_files = st.file_uploader(
+    "Upload Images",
+    type=[
+        "jpg",
+        "jpeg",
+        "png",
+        "webp"
+    ],
+    accept_multiple_files=True
+)
+
+# =====================================================
+# IMAGE GRID + CAPTIONS
+# =====================================================
+
+if uploaded_files:
+
+    uploaded_files = uploaded_files[:4]
+
+    cols = st.columns(2)
+
+    for idx, uploaded_file in enumerate(uploaded_files):
+
+        with cols[idx % 2]:
+
+            image = Image.open(uploaded_file).convert("RGB")
+
+            st.image(
+                image,
+                use_container_width=True
+            )
+
+            # =========================================
+            # IMAGE PREPROCESSING
+            # =========================================
+
+            img = image.resize((224,224))
+
+            img = img_to_array(img)
+
+            img = preprocess_input(img)
+
+            img = np.expand_dims(img, axis=0)
+
+            # =========================================
+            # FEATURE EXTRACTION + CAPTION
+            # =========================================
+
+            with st.spinner("Generating caption..."):
+
+                features = feature_extractor.predict(
+                    img,
+                    verbose=0
+                )
+
+                caption = predict_caption_fast(
+                    caption_model,
+                    features
+                )
+
+            # =========================================
+            # DISPLAY CAPTION
+            # =========================================
+
+            st.markdown(
+                f"""
+                <div class="caption-box">
+                    {caption}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
