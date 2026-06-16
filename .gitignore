@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.idea/
 
 .ipynb_checkpoints/
 
@@ -12,7 +13,6 @@ env/
 .DS_Store
 Thumbs.db
 
-model/*.h5
 model/*.keras
 model/*.ckpt
 
