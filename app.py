@@ -27,7 +27,7 @@ from tensorflow.keras.preprocessing.image import img_to_array
 # =====================================================
 
 st.set_page_config(
-    page_title="Image Caption Generator",
+    page_title="AI Image Caption Generation",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -323,6 +323,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 
 # =====================================================
 # USE CASES SECTION
